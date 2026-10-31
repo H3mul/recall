@@ -9,6 +9,9 @@ from dataclasses import dataclass
 LINE = re.compile(r"^card (\d+): (\S+) \[(.*?)\], device (\d+): ")
 STANDARD_RATES = (192000, 176400, 96000, 88200, 48000, 44100, 32000, 22050, 16000, 8000)
 RANGE = re.compile(r"^(CHANNELS|RATE):\s*[\[(]?\s*(\d+)(?:\s+(\d+))?\s*[\])]?\s*$", re.M)
+FORMAT_LINE = re.compile(r"^FORMAT:\s*(.*)$", re.M)
+FORMAT_BITS = {"S16_LE": 16, "S24_3LE": 24, "S32_LE": 32}
+FORMAT_NAMES = {bits: name for name, bits in FORMAT_BITS.items()}
 
 Run = Callable[..., "subprocess.CompletedProcess[str]"]
 
@@ -33,6 +36,7 @@ class Device:
 class Format:
     channels: int
     rate: int
+    bits: int
 
 
 @dataclass(frozen=True)
@@ -45,6 +49,7 @@ class Range:
 class HwParams:
     channels: Range
     rate: Range
+    formats: frozenset[int]  # sample depths in bits
 
 
 def parse(text: str) -> list[Device]:
@@ -80,15 +85,17 @@ def get_target_device(patterns: Sequence[str], run: Run = subprocess.run) -> Dev
 
 
 def parse_hw_params(text: str) -> HwParams:
-    """Read the CHANNELS and RATE spans from a hw-params dump."""
+    """Read the CHANNELS and RATE spans and the FORMAT list from a hw-params dump."""
     out: dict[str, Range] = {}
     for m in RANGE.finditer(text):
         lo = int(m[2])
         out[m[1]] = Range(lo, int(m[3]) if m[3] else lo)
-    missing = {"CHANNELS", "RATE"} - out.keys()
+    fm = FORMAT_LINE.search(text)
+    formats = frozenset(FORMAT_BITS[t] for t in (fm[1].split() if fm else []) if t in FORMAT_BITS)
+    missing = [k for k in ("CHANNELS", "RATE") if k not in out] + ([] if formats else ["FORMAT"])
     if missing:
-        raise ProbeError(f"hw-params dump has no {', '.join(sorted(missing))}")
-    return HwParams(out["CHANNELS"], out["RATE"])
+        raise ProbeError(f"hw-params dump has no {', '.join(missing)}")
+    return HwParams(out["CHANNELS"], out["RATE"], formats)
 
 
 def arecord_dump_hw_params_raw(hw: str, channel_count: int | None = None, run: Run = subprocess.run) -> str:
@@ -119,13 +126,17 @@ def step_down(rate: int, floor: int = 0) -> int | None:
 
 
 def resolve_device_format(hw: str, max_channels: int | None = None, max_rate: int | None = None,
-           run: Run = subprocess.run) -> Format:
-    """Most channels, then the highest rate at that channel count, within the ceilings."""
+                          bit_depth: int | None = None, run: Run = subprocess.run) -> Format:
+    """Most channels, then the highest rate at that channel count, within the ceilings.
+
+    The sample depth is `bit_depth` when the device offers it, else the device's deepest format.
+    """
     params = parse_hw_params(arecord_dump_hw_params_raw(hw, run=run))
     chans = params.channels
     channels = min(chans.hi, max_channels) if max_channels else chans.hi
     if channels < chans.lo:
         raise ProbeError(f"channel ceiling {max_channels} is below the device minimum {chans.lo}")
-    # the rate range can depend on the channel count, so ask again at the chosen count
-    rate = parse_hw_params(arecord_dump_hw_params_raw(hw, channels, run=run)).rate
-    return Format(channels, best_rate(rate.lo, rate.hi, max_rate))
+    # the rate range and formats can depend on the channel count, so ask again at the chosen count
+    params = parse_hw_params(arecord_dump_hw_params_raw(hw, channels, run=run))
+    bits = bit_depth if bit_depth in params.formats else max(params.formats)
+    return Format(channels, best_rate(params.rate.lo, params.rate.hi, max_rate), bits)

@@ -59,13 +59,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("recall: no device matched", file=sys.stderr)
             return EX_FAILURE
         try:
-            fmt = audio_dev.resolve_device_format(dev.hw, cfg.max_channels, cfg.max_rate)
+            fmt = audio_dev.resolve_device_format(dev.hw, cfg.max_channels, cfg.max_rate, cfg.bit_depth)
         except audio_dev.ProbeError as e:
             print(f"recall: {dev.hw}: {e}", file=sys.stderr)
             return EX_FAILURE
-        print(f"device = {dev.hw}\nchannels = {fmt.channels}\nrate = {fmt.rate}")
+        print(f"device = {dev.hw}\nchannels = {fmt.channels}\nrate = {fmt.rate}\nbits = {fmt.bits}")
         return EX_OK
 
+    log.info("config %s", path)
+    for line in config.render(cfg).splitlines():
+        log.info("config %s", line)
     try:
         storage.verify(cfg.output_dir)
         recorder.run(cfg)

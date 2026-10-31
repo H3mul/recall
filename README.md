@@ -1,6 +1,6 @@
 # recall
 
-Record all: supervises SoX to capture every channel of an ALSA device (a Behringer XR18 by default) into gapless multitrack WAV chunks in a directory you choose.
+Record all: supervises arecord to capture every channel of an ALSA device (a Behringer XR18 by default) into gapless multitrack WAV chunks in a directory you choose.
 
 Python 3.11+, standard library only.
 
@@ -40,7 +40,7 @@ match = ["XR18", "X18"]
 # max_rate = 48000    # optional ceiling; default: the best rate the device offers
 
 [capture]
-bit_depth = 24        # 16, 24 or 32
+bit_depth = 24        # 16, 24 or 32; the device's deepest format if it lacks this
 chunk_seconds = 900   # also capped so a chunk stays under 4 GB
 stall_seconds = 10    # no output growth for this long means rebind
 ```

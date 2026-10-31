@@ -95,29 +95,39 @@ class Listing(unittest.TestCase):
 
 class Parse(unittest.TestCase):
     def test_ranges_and_single_values(self) -> None:
-        self.assertEqual(audio_dev.parse_hw_params(DUMP), audio_dev.HwParams(audio_dev.Range(2, 18), audio_dev.Range(44100, 48000)))
-        self.assertEqual(audio_dev.parse_hw_params(AT_18), audio_dev.HwParams(audio_dev.Range(18, 18), audio_dev.Range(48000, 48000)))
+        self.assertEqual(audio_dev.parse_hw_params(DUMP), audio_dev.HwParams(
+            audio_dev.Range(2, 18), audio_dev.Range(44100, 48000), frozenset({24})))
+        self.assertEqual(audio_dev.parse_hw_params(AT_18), audio_dev.HwParams(
+            audio_dev.Range(18, 18), audio_dev.Range(48000, 48000), frozenset({24})))
 
     def test_missing_fields(self) -> None:
         with self.assertRaises(audio_dev.ProbeError):
             audio_dev.parse_hw_params("nothing useful")
+        with self.assertRaises(audio_dev.ProbeError):
+            audio_dev.parse_hw_params(DUMP.replace("FORMAT:  S24_3LE", ""))
 
 
 class Select(unittest.TestCase):
     def test_max_channels_then_rate_at_that_count(self) -> None:
         run = dumps({None: DUMP, 18: AT_18, 2: AT_2})
-        self.assertEqual(audio_dev.resolve_device_format("hw:CARD=XR18,DEV=0", run=run), audio_dev.Format(18, 48000))
+        self.assertEqual(audio_dev.resolve_device_format("hw:CARD=XR18,DEV=0", run=run), audio_dev.Format(18, 48000, 24))
         self.assertIn("-D", run.calls[0])
         self.assertIn("hw:CARD=XR18,DEV=0", run.calls[0])
 
     def test_channel_ceiling_changes_rate_lookup(self) -> None:
         run = dumps({None: DUMP, 18: AT_18, 2: AT_2})
-        self.assertEqual(audio_dev.resolve_device_format("hw", max_channels=2, run=run), audio_dev.Format(2, 96000))
+        self.assertEqual(audio_dev.resolve_device_format("hw", max_channels=2, run=run), audio_dev.Format(2, 96000, 24))
 
     def test_rate_ceiling(self) -> None:
         run = dumps({None: DUMP, 2: AT_2})
         self.assertEqual(audio_dev.resolve_device_format("hw", max_channels=2, max_rate=50000, run=run),
-                         audio_dev.Format(2, 48000))
+                         audio_dev.Format(2, 48000, 24))
+
+    def test_configured_depth_when_offered_else_deepest(self) -> None:
+        dump = DUMP.replace("FORMAT:  S24_3LE", "FORMAT:  S16_LE S32_LE")
+        run = dumps({None: dump, 2: AT_2.replace("S24_3LE", "S16_LE S32_LE")})
+        self.assertEqual(audio_dev.resolve_device_format("hw", 2, bit_depth=16, run=run).bits, 16)
+        self.assertEqual(audio_dev.resolve_device_format("hw", 2, bit_depth=24, run=run).bits, 32)
 
     def test_ceiling_below_minimum(self) -> None:
         run = dumps({None: DUMP, 2: AT_2})

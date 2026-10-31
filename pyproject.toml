@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "recall"
 version = "0.1.0"
-description = "Record all: supervised multitrack capture with SoX"
+description = "Record all: supervised multitrack capture with arecord"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
