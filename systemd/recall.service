@@ -1,0 +1,35 @@
+[Unit]
+Description=recall multitrack recorder
+After=local-fs.target
+# A deploy must never interrupt a recording; changes apply at the next start.
+X-RestartIfChanged=false
+X-StopIfChanged=false
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/env recall -c /etc/recall/config.toml
+Restart=always
+RestartSec=5
+# 78: invalid configuration, 69: recording drive missing or lost.
+# Neither is fixed by restarting; udev starts the unit when the drive appears.
+RestartPreventExitStatus=78 69
+SuccessExitStatus=0
+
+User=recorder
+Group=recorder
+SupplementaryGroups=audio
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Capture and I2C devices must stay reachable: no PrivateDevices.
+# ReadWritePaths for the recording directory is supplied by a drop-in.
+
+[Install]
+WantedBy=multi-user.target

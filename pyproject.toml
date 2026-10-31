@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recall"
+version = "0.1.0"
+description = "Record all: supervised multitrack capture with SoX"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+recall = "recall.cli:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
