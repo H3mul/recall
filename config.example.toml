@@ -1,0 +1,27 @@
+# Example recall configuration. Copy to ~/.config/recall/config.toml or pass with -c.
+# Check it with: recall -c config.example.toml --check
+# Unknown keys are errors.
+
+# Show the SSD1306 status display (default: false).
+# display = true
+
+[device]
+# Regular expressions searched in each `arecord -l` line. List order wins,
+# then the lowest card number.
+match = ["XR18", "X18"]
+# Optional ceilings. Default: every channel and the best rate the device offers.
+# max_channels = 18
+# max_rate = 48000
+
+[storage]
+# ext4 filesystem UUID of the recording drive (see `blkid`).
+uuid = "0a1b2c3d-1111-2222-3333-444455556666"
+# Must be a mountpoint of that filesystem.
+mount = "/mnt/recordings"
+# Recording directory below the mountpoint; must already exist.
+dir = "recall"
+
+[capture]
+bit_depth = 24       # 16, 24 or 32
+chunk_seconds = 900  # also capped so a chunk stays under 4 GB
+stall_seconds = 10   # no output growth for this long means rebind

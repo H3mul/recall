@@ -44,6 +44,12 @@ class Defaults(unittest.TestCase):
         self.assertEqual(cfg.record_dir, "/mnt/rec/recordings")
 
 
+class Example(unittest.TestCase):
+    def test_example_file_is_valid(self):
+        path = Path(__file__).parent.parent / "config.example.toml"
+        self.assertEqual(config.load(path).match, ("XR18", "X18"))
+
+
 class Validation(unittest.TestCase):
     def errors(self, text):
         with self.assertRaises(config.ConfigError) as cm:

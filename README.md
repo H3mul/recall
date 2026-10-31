@@ -23,7 +23,7 @@ The configuration file is `-c PATH`, else `$XDG_CONFIG_HOME/recall/config.toml`,
 
 ## Configuration
 
-Unknown keys are errors. Only `device.match` and the three `[storage]` keys are required.
+A commented template is in [`config.example.toml`](config.example.toml). Unknown keys are errors. Only `device.match` and the three `[storage]` keys are required.
 
 ```toml
 [device]
