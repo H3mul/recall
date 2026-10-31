@@ -21,11 +21,15 @@ class FakeProc:
     def poll(self) -> int | None:
         return self.returncode
 
+    def terminate(self) -> None:
+        self.killed = True  # SoX closes its chunk on SIGTERM; the fake just exits
+        self.returncode = -15
+
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
 
-    def wait(self) -> int | None:
+    def wait(self, timeout: float | None = None) -> int | None:
         return self.returncode
 
 
@@ -116,6 +120,22 @@ class Supervision(Harness):
         self.rec.tick()  # 10 s without growth: stalled
         self.assertTrue(proc.killed)
         self.assertIsNone(self.rec.session)
+
+    def test_chunk_rollover_is_not_a_stall(self) -> None:
+        self.rec.tick()
+        proc = self.spawned[0][1]
+        self.grow("XR18-0001-001.wav", 1000)
+        self.now = 1
+        self.rec.tick()
+        self.grow("XR18-0001-002.wav", 10)  # the next chunk starts smaller than the last one
+        self.now = 9
+        self.rec.tick()  # rollover seen at t=9
+        self.now = 18
+        self.rec.tick()  # 9 s into the new chunk: still healthy
+        self.assertFalse(proc.killed)
+        self.now = 19
+        self.rec.tick()  # 10 s without growth in the new chunk: stalled
+        self.assertTrue(proc.killed)
 
     def test_open_failure_steps_rate_down(self) -> None:
         self.rec.tick()

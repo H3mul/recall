@@ -3,7 +3,9 @@
 import logging
 import os
 import re
+import signal
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,6 +18,7 @@ log = logging.getLogger("recall")
 TICK = 1.0  # seconds between checks; also the telemetry interval
 CHUNK_LIMIT = 4_000_000_000  # keeps each WAV under the RIFF 4 GB limit
 START_GRACE = 2.0  # SoX exiting sooner than this after spawn means the open failed
+SOX_STOP_TIMEOUT = 5.0  # time SoX gets to close its open chunk after SIGTERM, before SIGKILL
 
 Spawn = Callable[..., Any]
 Clock = Callable[[], float]
@@ -124,6 +127,7 @@ class Recorder:
             if s.chunk_name:
                 os.sync()  # the previous chunk has closed: push it to the drive
             s.chunk_name = latest
+            s.size, s.grew = 0, now  # a new chunk starts small: measure its growth from zero
 
         size = os.path.getsize(os.path.join(self.cfg.output_dir, latest)) if latest else 0
         if size > s.size:
@@ -159,8 +163,13 @@ class Recorder:
     def stop_sox(self) -> None:
         if self.session is None or self.session.proc.poll() is not None:
             return
-        self.session.proc.kill()
-        self.session.proc.wait()
+        proc = self.session.proc
+        proc.terminate()  # SoX finalizes the open chunk on SIGTERM; SIGKILL would leave it unreadable
+        try:
+            proc.wait(timeout=SOX_STOP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
 
     def stop(self) -> None:
         self.stop_sox()
@@ -169,8 +178,12 @@ class Recorder:
 
 
 def run(cfg: config.Config) -> None:
-    """Record until the output directory disappears; raises storage.StorageError."""
+    """Record until the output directory disappears; raises storage.StorageError.
+
+    SIGINT and SIGTERM both end in the `finally`, so SoX gets to close its chunk.
+    """
     rec = Recorder(cfg)
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(0))  # a stop, not a failure
     try:
         while True:
             rec.tick()
