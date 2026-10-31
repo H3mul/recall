@@ -4,7 +4,7 @@ import argparse
 import logging
 import sys
 
-from recall import __version__, config, storage
+from recall import __version__, config, discovery, probe, storage
 
 EX_OK = 0
 EX_FAILURE = 1
@@ -52,8 +52,17 @@ def main(argv=None):
         return EX_OK
 
     if args.probe:
-        log.error("--probe is not implemented yet")
-        return EX_FAILURE
+        dev = discovery.bind(cfg.match, discovery.list_devices())
+        if dev is None:
+            print("recall: no device matched", file=sys.stderr)
+            return EX_FAILURE
+        try:
+            fmt = probe.select(dev.hw, cfg.max_channels, cfg.max_rate)
+        except probe.ProbeError as e:
+            print(f"recall: {dev.hw}: {e}", file=sys.stderr)
+            return EX_FAILURE
+        print(f"device = {dev.hw}\nchannels = {fmt.channels}\nrate = {fmt.rate}")
+        return EX_OK
 
     try:
         storage.verify(cfg)
