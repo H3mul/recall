@@ -6,7 +6,7 @@ import sys
 
 from collections.abc import Sequence
 
-from recall import __version__, audio_dev, config, storage
+from recall import __version__, audio_dev, config, recorder, storage
 
 EX_OK = 0
 EX_FAILURE = 1
@@ -68,9 +68,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         storage.verify(cfg.output_dir)
+        recorder.run(cfg)
     except storage.StorageError as e:
         log.error("storage: %s", e)
         return EX_UNAVAILABLE
-
-    log.error("recording is not implemented yet")
-    return EX_FAILURE
+    return EX_OK
