@@ -88,9 +88,9 @@ class Naming(unittest.TestCase):
             s = recorder.Session(None, None, None, "XR18", 6, "XR18-0006", started=0.0)  # type: ignore[arg-type]
             self.assertEqual(rec.latest_chunk(s), "XR18-0006-10.wav")
 
-    def test_chunk_length_capped_by_riff_limit(self) -> None:
-        self.assertEqual(recorder.chunk_length(900, 18, 48000, 24), 900)
-        self.assertEqual(recorder.chunk_length(900, 18, 96000, 24), 771)
+    def test_chunk_length_capped_by_wav_limit(self) -> None:
+        self.assertEqual(recorder.chunk_length(900, 18, 48000, 24), 733)
+        self.assertEqual(recorder.chunk_length(900, 18, 96000, 24), 366)
 
     def test_capture_command_splits_by_time_at_asked_format(self) -> None:
         fmt = audio_dev.Format(18, 48000, 24)

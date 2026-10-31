@@ -41,6 +41,6 @@ match = ["XR18", "X18"]
 
 [capture]
 bit_depth = 24        # 16, 24 or 32; the device's deepest format if it lacks this
-chunk_seconds = 900   # also capped so a chunk stays under 4 GB
+chunk_seconds = 900   # also capped so a chunk stays under 1.9 GB
 stall_seconds = 10    # no output growth for this long means rebind
 ```

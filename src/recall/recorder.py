@@ -17,7 +17,7 @@ from recall import __version__, audio_dev, config, storage
 log = logging.getLogger("recall")
 
 TICK = 1.0  # seconds between checks; also the telemetry interval
-CHUNK_LIMIT = 4_000_000_000  # keeps each WAV under the RIFF 4 GB limit
+CHUNK_LIMIT = 1_900_000_000  # arecord stops writing a WAV near 1.98 GB and does not split it: stay under that
 START_GRACE = 2.0  # arecord exiting sooner than this after spawn means the open failed
 STOP_TIMEOUT = 5.0  # time arecord gets to close its open chunk after SIGTERM, before SIGKILL
 
@@ -34,7 +34,7 @@ def byte_rate(channels: int, rate: int, bit_depth: int) -> int:
 
 
 def chunk_length(configured: int, channels: int, rate: int, bit_depth: int) -> int:
-    """Shorter of the configured chunk and the longest that stays under the RIFF limit."""
+    """Shorter of the configured chunk and the longest that stays under the arecord WAV limit."""
     return min(configured, CHUNK_LIMIT // byte_rate(channels, rate, bit_depth))
 
 
