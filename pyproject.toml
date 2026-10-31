@@ -14,5 +14,9 @@ dependencies = []
 [project.scripts]
 recall = "recall.cli:main"
 
+[tool.mypy]
+strict = true
+python_version = "3.11"
+
 [tool.setuptools.package-dir]
 "" = "src"

@@ -4,7 +4,9 @@ import argparse
 import logging
 import sys
 
-from recall import __version__, config, discovery, probe, storage
+from collections.abc import Sequence
+
+from recall import __version__, audio_dev, config, storage
 
 EX_OK = 0
 EX_FAILURE = 1
@@ -14,7 +16,7 @@ EX_CONFIG = 78  # invalid configuration
 log = logging.getLogger("recall")
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="recall", description="Record every channel of a capture device.")
     p.add_argument("-c", "--config", metavar="PATH",
                    help="configuration file (default: $XDG_CONFIG_HOME/recall/config.toml, "
@@ -28,7 +30,7 @@ def build_parser():
     return p
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.version:
         print(f"recall {__version__}")
@@ -52,20 +54,20 @@ def main(argv=None):
         return EX_OK
 
     if args.probe:
-        dev = discovery.bind(cfg.match, discovery.list_devices())
+        dev = audio_dev.get_target_device(cfg.match)
         if dev is None:
             print("recall: no device matched", file=sys.stderr)
             return EX_FAILURE
         try:
-            fmt = probe.select(dev.hw, cfg.max_channels, cfg.max_rate)
-        except probe.ProbeError as e:
+            fmt = audio_dev.resolve_device_format(dev.hw, cfg.max_channels, cfg.max_rate)
+        except audio_dev.ProbeError as e:
             print(f"recall: {dev.hw}: {e}", file=sys.stderr)
             return EX_FAILURE
         print(f"device = {dev.hw}\nchannels = {fmt.channels}\nrate = {fmt.rate}")
         return EX_OK
 
     try:
-        storage.verify(cfg)
+        storage.verify(cfg.output_dir)
     except storage.StorageError as e:
         log.error("storage: %s", e)
         return EX_UNAVAILABLE

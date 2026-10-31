@@ -3,14 +3,16 @@
 import os
 import re
 import tomllib
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 BIT_DEPTHS = (16, 24, 32)
 
-KNOWN = {
+TOP_LEVEL = {"output_dir", "display"}
+KNOWN: dict[str, set[str]] = {
     "device": {"match", "max_channels", "max_rate"},
-    "storage": {"uuid", "mount", "dir"},
     "capture": {"bit_depth", "chunk_seconds", "stall_seconds"},
 }
 
@@ -18,17 +20,15 @@ KNOWN = {
 class ConfigError(Exception):
     """Invalid configuration; `errors` names every invalid field."""
 
-    def __init__(self, errors):
+    def __init__(self, errors: Iterable[str]) -> None:
         self.errors = list(errors)
         super().__init__("; ".join(self.errors))
 
 
 @dataclass(frozen=True)
 class Config:
-    match: tuple
-    uuid: str
-    mount: str
-    dir: str
+    match: tuple[str, ...]
+    output_dir: str
     max_channels: int | None = None
     max_rate: int | None = None
     bit_depth: int = 24
@@ -36,17 +36,13 @@ class Config:
     stall_seconds: float = 10
     display: bool = False
 
-    @property
-    def record_dir(self):
-        return os.path.join(self.mount, self.dir)
 
-
-def default_path(env=os.environ):
+def default_path(env: Mapping[str, str] = os.environ) -> Path:
     base = env.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
     return Path(base) / "recall" / "config.toml"
 
 
-def load(path):
+def load(path: str | os.PathLike[str]) -> Config:
     """Read, parse and validate `path`; raise ConfigError on any problem."""
     path = Path(path)
     try:
@@ -59,22 +55,22 @@ def load(path):
     return parse(raw)
 
 
-def _posint(v):
+def _posint(v: Any) -> bool:
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
 
-def _text(v):
-    return isinstance(v, str) and bool(v)
+def _abspath(v: Any) -> bool:
+    return isinstance(v, str) and os.path.isabs(v)
 
 
-def _posnum(v):
+def _posnum(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0
 
 
-def parse(raw):
-    errors = []
+def parse(raw: Mapping[str, Any]) -> Config:
+    errors: list[str] = []
     for key, val in raw.items():
-        if key == "display":
+        if key in TOP_LEVEL:
             continue
         if key not in KNOWN:
             errors.append(f"{key}: unknown key")
@@ -83,13 +79,14 @@ def parse(raw):
         else:
             errors += [f"{key}.{k}: unknown key" for k in val if k not in KNOWN[key]]
 
-    def table(name):
+    def table(name: str) -> Mapping[str, Any]:
         t = raw.get(name)
         return t if isinstance(t, dict) else {}
 
-    dev, sto, cap = table("device"), table("storage"), table("capture")
+    dev, cap = table("device"), table("capture")
 
-    def get(t, name, key, default, check, msg, required=False):
+    def get(t: Mapping[str, Any], name: str, key: str, default: Any,
+            check: Callable[[Any], bool], msg: str, required: bool = False) -> Any:
         path = f"{name}.{key}" if name else key
         if key not in t:
             if required:
@@ -102,8 +99,8 @@ def parse(raw):
 
     match = get(
         dev, "device", "match", [],
-        lambda v: isinstance(v, list) and v and all(isinstance(p, str) for p in v),
-        "must be a non-empty array of strings", required=True,
+        lambda v: isinstance(v, list) and (not v or all(isinstance(p, str) for p in v)),
+        "must be an empty array or an array of strings", required=False,
     )
     for p in match:
         try:
@@ -113,9 +110,7 @@ def parse(raw):
 
     cfg = Config(
         match=tuple(match),
-        uuid=get(sto, "storage", "uuid", "", _text, "must be a non-empty string", True),
-        mount=get(sto, "storage", "mount", "", _text, "must be a non-empty string", True),
-        dir=get(sto, "storage", "dir", "", _text, "must be a non-empty string", True),
+        output_dir=get(raw, "", "output_dir", "", _abspath, "must be an absolute path", True),
         max_channels=get(dev, "device", "max_channels", None, _posint, "must be a positive integer"),
         max_rate=get(dev, "device", "max_rate", None, _posint, "must be a positive integer"),
         bit_depth=get(
@@ -132,15 +127,13 @@ def parse(raw):
     return cfg
 
 
-def render(cfg):
+def render(cfg: Config) -> str:
     """Resolved settings, one `key = value` line each, for --check."""
     rows = [
         ("device.match", list(cfg.match)),
         ("device.max_channels", cfg.max_channels),
         ("device.max_rate", cfg.max_rate),
-        ("storage.uuid", cfg.uuid),
-        ("storage.mount", cfg.mount),
-        ("storage.dir", cfg.dir),
+        ("output_dir", cfg.output_dir),
         ("capture.bit_depth", cfg.bit_depth),
         ("capture.chunk_seconds", cfg.chunk_seconds),
         ("capture.stall_seconds", cfg.stall_seconds),
