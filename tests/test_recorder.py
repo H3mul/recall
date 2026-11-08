@@ -198,3 +198,26 @@ class Supervision(Harness):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DisplayTests(unittest.TestCase):
+    def test_lines_fit_the_panel_and_frame_is_full_screen(self) -> None:
+        from recall import display
+        rec = dict(state="recording", session_s=3725, free_bytes=123_400_000_000, channels=18, rate=48000,
+                   remaining_s=18_000)
+        text = display.lines(rec)
+        self.assertEqual(text, ["recording 18ch 48k", "rec 01:02:05", "free 123.4 GB", "left 5h00m"])
+        self.assertTrue(all(len(t) <= 21 for t in text))
+        self.assertEqual(len(display.frame(text)), 512)
+        waiting = display.lines(dict(state="waiting", session_s=0, free_bytes=5_000_000_000))
+        self.assertEqual(waiting[3], "left --")
+
+    def test_missing_device_is_logged_not_raised(self) -> None:
+        from recall import display
+        d = display.Display(dev="/nonexistent/i2c")
+        with self.assertLogs("recall", "ERROR"):
+            d.show(dict(state="waiting", session_s=0, free_bytes=1))
+
+    def test_clear_without_a_panel_is_a_noop(self) -> None:
+        from recall import display
+        display.Display(dev="/nonexistent/i2c").clear()

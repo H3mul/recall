@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from recall import __version__, audio_dev, config, storage
+from recall import __version__, audio_dev, config, display, storage
 
 log = logging.getLogger("recall")
 
@@ -73,8 +73,10 @@ class Session:
 
 class Recorder:
     def __init__(self, cfg: config.Config, run: audio_dev.Run = subprocess.run,
-                 spawn: Spawn = subprocess.Popen, clock: Clock = time.monotonic) -> None:
+                 spawn: Spawn = subprocess.Popen, clock: Clock = time.monotonic,
+                 screen: display.Display | None = None) -> None:
         self.cfg = cfg
+        self.screen = screen
         self.run = run
         self.spawn = spawn
         self.clock = clock
@@ -109,6 +111,8 @@ class Recorder:
                           remaining_s=fields["free_bytes"] // per_second,
                           file=s.chunk_name, file_bytes=s.size, session_bytes=s.closed_bytes + s.size)
         log.info("status %s", " ".join(f"{k}={v}" for k, v in fields.items()))
+        if self.screen:
+            self.screen.show(fields)
 
     def try_start(self) -> None:
         dev = audio_dev.get_target_device(self.cfg.match, self.run)
@@ -213,7 +217,8 @@ def run(cfg: config.Config) -> None:
 
     SIGINT and SIGTERM both end in the `finally`, so arecord gets to close its chunk.
     """
-    rec = Recorder(cfg)
+    screen = display.Display() if cfg.display else None
+    rec = Recorder(cfg, screen=screen)
     signal.signal(signal.SIGTERM, lambda _signum, _frame: sys.exit(0))  # a stop, not a failure
     log.info("recall %s", __version__)
     try:
@@ -222,3 +227,5 @@ def run(cfg: config.Config) -> None:
             time.sleep(TICK)
     finally:
         rec.stop()
+        if screen:
+            screen.clear()
