@@ -205,15 +205,24 @@ class DisplayTests(unittest.TestCase):
         from recall import display
         rec = dict(state="recording", session_s=3725, free_bytes=123_400_000_000, channels=18, rate=48000,
                    remaining_s=18_000)
-        self.assertEqual(display.status_rows(rec), [("time", "01:02:05"), ("left", "5h00m"), ("free", "123.4 GB")])
+        self.assertEqual(display.status_rows(rec), [("time", "01:02:05"), ("left", "5h00m")])
 
     def test_status_rows_waiting_show_wanted_and_observed_devices(self) -> None:
         from recall import display
         wait = dict(state="waiting", session_s=0, free_bytes=5_000_000_000, want=["XR18", "X18"], have=["PCH", "Mic"])
-        self.assertEqual(display.status_rows(wait),
-                         [("want", "XR18,X18"), ("have", "PCH,Mic"), ("free", "5.0 GB")])
+        self.assertEqual(display.status_rows(wait), [("want", "XR18,X18"), ("have", "PCH,Mic")])
         bare = dict(state="waiting", session_s=0, free_bytes=5_000_000_000)
-        self.assertEqual(display.status_rows(bare)[:2], [("want", "any"), ("have", "none")])
+        self.assertEqual(display.status_rows(bare), [("want", "any"), ("have", "none")])
+
+    def test_footer_and_icon(self) -> None:
+        from recall import display
+        self.assertEqual(display.status_footer(dict(free_bytes=123_400_000_000)), "free 123G")
+        full = dict(state="recording", free_bytes=5_000_000_000, write_bps=2_600_000, io_stall_pct=3.4)
+        self.assertEqual(display.status_footer(full), "free 5G 2.6MB/s io3%")
+        self.assertIs(display.pick_icon(dict(state="waiting")), display.HOURGLASS)
+        self.assertIs(display.pick_icon(full), display.RECORD_DOT)
+        self.assertIs(display.pick_icon({**full, "behind": 1}), display.SNAIL)
+        self.assertIs(display.pick_icon({**full, "behind": 1, "overrun_recent": 1}), display.ALERT)
 
     def test_missing_panel_is_logged_not_raised_and_retried_once_a_minute(self) -> None:
         from recall import display
@@ -234,3 +243,79 @@ class DisplayTests(unittest.TestCase):
     def test_clear_without_a_panel_is_a_noop(self) -> None:
         from recall import display
         display.Display().clear()
+
+
+class HealthTests(unittest.TestCase):
+    PRESSURE = "some avg10=3.40 avg60=1.00 avg300=0.50 total=123\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n"
+
+    def meminfo(self, dirty: int, writeback: int = 0) -> str:
+        return f"MemTotal: 1000000 kB\nDirty: {dirty} kB\nWriteback: {writeback} kB\n"
+
+    def health(self, now: list[float], dirty: list[int]) -> Any:
+        from recall import health
+        files = {"/proc/pressure/io": self.PRESSURE}
+        return health.Health(clock=lambda: now[0], read=lambda p: self.meminfo(dirty[0]) if p == "/proc/meminfo"
+                             else files[p])
+
+    def test_parsers(self) -> None:
+        from recall import health
+        self.assertEqual(health.io_stall_pct(self.PRESSURE), 3.4)
+        self.assertEqual(health.backlog_bytes(self.meminfo(100, 20)), 120 * 1024)
+
+    def test_write_rate_over_the_window(self) -> None:
+        now, dirty = [0.0], [0]
+        h = self.health(now, dirty)
+        self.assertNotIn("write_bps", h.sample(0, 1000))  # one sample is no rate
+        now[0] = 2.0
+        self.assertEqual(h.sample(5_200_000, 1000)["write_bps"], 2_600_000)
+
+    def test_overrun_stays_flagged_for_30_seconds_and_logs_once_per_burst(self) -> None:
+        now, dirty = [0.0], [0]
+        h = self.health(now, dirty)
+        self.assertTrue(h.overrun())
+        self.assertFalse(h.overrun())  # same burst
+        self.assertEqual(h.sample(0, 1000)["overruns"], 2)
+        self.assertEqual(h.sample(0, 1000)["overrun_recent"], 1)
+        now[0] = 29.0
+        self.assertEqual(h.sample(0, 1000)["overrun_recent"], 1)
+        now[0] = 31.0
+        self.assertEqual(h.sample(0, 1000)["overrun_recent"], 0)
+        self.assertTrue(h.overrun())  # quiet long enough to log again
+
+    def test_behind_when_backlog_passes_the_limit_and_clears_after_30_seconds(self) -> None:
+        now, dirty = [0.0], [0]
+        h = self.health(now, dirty)
+        rate = 1_000_000  # limit is 45 s of data: 45 MB
+        dirty[0] = 40_000
+        self.assertEqual(h.sample(0, rate)["behind"], 0)  # 41 MB: under the limit
+        dirty[0] = 50_000
+        self.assertEqual(h.sample(0, rate)["behind"], 1)
+        dirty[0] = 0
+        now[0] = 29.0
+        self.assertEqual(h.sample(0, rate)["behind"], 1)  # drained, but still inside the window
+        now[0] = 31.0
+        self.assertEqual(h.sample(0, rate)["behind"], 0)
+
+    def test_missing_proc_files_are_left_out(self) -> None:
+        from recall import health
+
+        def none(_: str) -> str:
+            raise OSError
+
+        fields = health.Health(read=none).sample(0, 1000)
+        self.assertNotIn("io_stall_pct", fields)
+        self.assertNotIn("backlog_bytes", fields)
+        self.assertEqual(fields["behind"], 0)
+
+
+class StderrTests(Harness):
+    def test_overruns_are_counted_from_arecord_stderr(self) -> None:
+        import io
+        self.rec.tick()
+        with self.assertLogs("recall", "WARNING") as logs:
+            self.rec.read_stderr(io.StringIO("overrun!!! (at least 3.1 ms long)\noverrun!!!\narecord: oops\n"))
+        self.assertEqual(self.rec.vitals.overruns, 2)
+        self.assertEqual(len(logs.output), 2)  # first overrun of the burst, and the unrelated line
+        with self.assertLogs("recall", "INFO") as logs:
+            self.rec.tick()
+        self.assertIn("overruns=2", logs.output[-1])

@@ -7,12 +7,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from recall import __version__, audio_dev, config, display, storage
+from recall import __version__, audio_dev, config, display, health, storage
 
 log = logging.getLogger("recall")
 
@@ -74,9 +75,10 @@ class Session:
 class Recorder:
     def __init__(self, cfg: config.Config, run: audio_dev.Run = subprocess.run,
                  spawn: Spawn = subprocess.Popen, clock: Clock = time.monotonic,
-                 screen: display.Display | None = None) -> None:
+                 screen: display.Display | None = None, vitals: health.Health | None = None) -> None:
         self.cfg = cfg
         self.screen = screen
+        self.vitals = vitals or health.Health(clock)
         self.run = run
         self.spawn = spawn
         self.clock = clock
@@ -110,6 +112,7 @@ class Recorder:
                           chunk_length=chunk_length(self.cfg.chunk_seconds, s.fmt.channels, s.fmt.rate, s.fmt.bits),
                           remaining_s=fields["free_bytes"] // per_second,
                           file=s.chunk_name, file_bytes=s.size, session_bytes=s.closed_bytes + s.size)
+            fields.update(self.vitals.sample(s.closed_bytes + s.size, per_second))
         log.info("status %s", " ".join(f"{k}={v}" for k, v in fields.items()))
         if self.screen:
             if s is None:  # nothing to record yet: tell the operator what is wanted and what is there
@@ -136,7 +139,10 @@ class Recorder:
         base = f"{slug}-{number:04d}"
         out = os.path.join(self.cfg.output_dir, f"{base}.wav")
         cmd = capture_command(dev.hw, fmt, chunk, out)
-        proc = self.spawn(cmd, stdin=subprocess.DEVNULL)
+        self.vitals.reset()
+        proc = self.spawn(cmd, stdin=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+        if getattr(proc, "stderr", None):
+            threading.Thread(target=self.read_stderr, args=(proc.stderr,), daemon=True).start()
         now = self.clock()
         self.session = Session(proc, dev, fmt, slug, number, base, started=now, grew=now)
         self.last_problem = ""
@@ -171,6 +177,16 @@ class Recorder:
             s.size, s.grew = size, now
         elif now - s.grew >= self.cfg.stall_seconds:
             return self.lose(f"output stopped growing for {self.cfg.stall_seconds:g} s")
+
+    def read_stderr(self, stream: Any) -> None:
+        """Log what arecord says and count its overruns (it prints `overrun!!!` even with -q). Ends at EOF."""
+        for line in stream:
+            line = line.strip()
+            if "overrun" in line.lower():
+                if self.vitals.overrun():  # a burst is logged once, not once per overrun
+                    log.warning("arecord: %s (%d overruns this session)", line, self.vitals.overruns)
+            elif line:
+                log.warning("arecord: %s", line)
 
     def open_failed(self, s: Session) -> None:
         nxt = audio_dev.step_down(s.fmt.rate)
