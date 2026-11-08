@@ -201,14 +201,19 @@ if __name__ == "__main__":
 
 
 class DisplayTests(unittest.TestCase):
-    def test_status_lines(self) -> None:
+    def test_status_rows_recording(self) -> None:
         from recall import display
         rec = dict(state="recording", session_s=3725, free_bytes=123_400_000_000, channels=18, rate=48000,
                    remaining_s=18_000)
-        self.assertEqual(display.status_lines(rec),
-                         ["recording 18ch 48k", "rec 01:02:05", "free 123.4 GB", "left 5h00m"])
-        waiting = display.status_lines(dict(state="waiting", session_s=0, free_bytes=5_000_000_000))
-        self.assertEqual(waiting[3], "left --")
+        self.assertEqual(display.status_rows(rec), [("time", "01:02:05"), ("left", "5h00m"), ("free", "123.4 GB")])
+
+    def test_status_rows_waiting_show_wanted_and_observed_devices(self) -> None:
+        from recall import display
+        wait = dict(state="waiting", session_s=0, free_bytes=5_000_000_000, want=["XR18", "X18"], have=["PCH", "Mic"])
+        self.assertEqual(display.status_rows(wait),
+                         [("want", "XR18,X18"), ("have", "PCH,Mic"), ("free", "5.0 GB")])
+        bare = dict(state="waiting", session_s=0, free_bytes=5_000_000_000)
+        self.assertEqual(display.status_rows(bare)[:2], [("want", "any"), ("have", "none")])
 
     def test_missing_panel_is_logged_not_raised_and_retried_once_a_minute(self) -> None:
         from recall import display

@@ -112,6 +112,9 @@ class Recorder:
                           file=s.chunk_name, file_bytes=s.size, session_bytes=s.closed_bytes + s.size)
         log.info("status %s", " ".join(f"{k}={v}" for k, v in fields.items()))
         if self.screen:
+            if s is None:  # nothing to record yet: tell the operator what is wanted and what is there
+                seen = dict.fromkeys(d.card_id for d in audio_dev.list_devices(self.run))
+                fields.update(want=list(self.cfg.match), have=list(seen))
             self.screen.show(fields)
 
     def try_start(self) -> None:
