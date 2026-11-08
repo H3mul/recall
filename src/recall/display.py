@@ -17,17 +17,16 @@ I2C_ADDRESS = 0x3C
 WIDTH, HEIGHT = 128, 32
 LINE_HEIGHT = 8  # pixels per text line: four lines fit in 32
 FONT_FILE = Path(__file__).parent / "fonts" / "spleen-5x8.otb"  # Spleen 5x8 bitmap font, BSD-2 (see fonts/)
-ICON_SIZE = 24 
-ICON_X = WIDTH - ICON_SIZE  # right edge of the screen
-ICON_Y = (HEIGHT - ICON_SIZE) // 2  # centered vertically
+ICON_SIZE = 22  # three text lines high
+ICON_X, ICON_Y = WIDTH - ICON_SIZE, 0  # top right corner
 FONTS = Path(__file__).parent / "fonts"
 FA = FONTS / "fa-solid-subset.otf"  # Font Awesome 6 Free (OFL): the hourglass, dot and triangle
 EMOJI = FONTS / "noto-emoji-subset.ttf"  # Noto Emoji (OFL): the snail
-# (font file, glyph, font size); each size is chosen so the glyph fills the 16 px box
-HOURGLASS = (FA, "\uf252", 16)
-RECORD_DOT = (FA, "\uf111", 14)
-ALERT = (FA, "\uf071", 16)
-SNAIL = (EMOJI, "\U0001F40C", 18)
+# (font file, glyph); drawn as large as fits the icon box
+HOURGLASS = (FA, "\uf252")
+RECORD_DOT = (FA, "\uf111")
+ALERT = (FA, "\uf071")
+SNAIL = (EMOJI, "\U0001F40C")
 GLYPH_WIDTH = 5
 RETRY_SECONDS = 60  # no more than one init attempt per minute while the panel is absent
 
@@ -55,22 +54,24 @@ def status_rows(status: Mapping[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
-def status_footer(status: Mapping[str, Any]) -> str:
-    """The bottom line, no label pad: free storage, then write rate and IO stall when known."""
-    footer = f"free {status['free_bytes'] / 1e9:.0f}G"
-    if "write_bps" in status:
-        footer += f" {status['write_bps'] / 1e6:.1f}MB/s"
-    if "io_stall_pct" in status:
-        footer += f" io{status['io_stall_pct']:.0f}%"
-    return footer
+def status_footer(status: Mapping[str, Any]) -> tuple[str, str, str]:
+    """The bottom line, always shown: free storage (left), write rate (center), IO stall (right).
+
+    While not recording the rate and stall read 0. While recording, an IO stall the kernel cannot
+    report (no PSI) shows as `--`, not 0.
+    """
+    recording = status["state"] == "recording"
+    stall = status.get("io_stall_pct", None if recording else 0)
+    return (f"hdd:{status['free_bytes'] / 1e9:.0f}G",
+            f"{status.get('write_bps', 0) / 1e6:.1f}MB/s",
+            f"io:{'--' if stall is None else f'{stall:.0f}%'}")
 
 
-def pick_icon(status: Mapping[str, Any]) -> tuple[Path, str, int]:
+def pick_icon(status: Mapping[str, Any]) -> tuple[Path, str]:
     """Hourglass while waiting. While recording: alert after a recent overrun, snail if the drive is
     behind, otherwise the record dot."""
     if status["state"] != "recording":
-        # return HOURGLASS
-        return SNAIL
+        return HOURGLASS
     if status.get("overrun_recent"):
         return ALERT
     if status.get("behind"):
@@ -110,16 +111,13 @@ class Display:
             self.device = None  # reconnect at the next attempt
 
     def draw(self, status: Mapping[str, Any]) -> None:
-        from PIL import Image, ImageChops, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont
 
         font = ImageFont.truetype(str(FONT_FILE), LINE_HEIGHT)
-        icon_file, glyph, size = pick_icon(status)
-        icon_font = ImageFont.truetype(str(icon_file), size)
-
         rows = status_rows(status)
         # Values line up just past the widest "label: " pad.
         value_x = int(max(font.getlength(label + ": ") for label, _ in rows))
-        value_chars = (ICON_X - value_x) // GLYPH_WIDTH  # rows 1-2 share the icon's columns
+        value_chars = (ICON_X - value_x) // GLYPH_WIDTH  # rows 1-2 end before the icon
 
         image = Image.new("1", (WIDTH, HEIGHT))
         draw = ImageDraw.Draw(image)
@@ -127,18 +125,28 @@ class Display:
             y = row * LINE_HEIGHT
             draw.text((0, y), label + ":", font=font, fill=1)
             draw.text((value_x, y), value[:value_chars], font=font, fill=1)
-        draw.text((0, 3 * LINE_HEIGHT), status_footer(status)[:WIDTH // GLYPH_WIDTH], font=font, fill=1)  # below the icon
-        left, top, right, bottom = icon_font.getbbox(glyph)  # center the glyph's ink, not its advance box
-        draw.text((ICON_X + (ICON_SIZE - left - right) // 2, ICON_Y + (ICON_SIZE - top - bottom) // 2), glyph,
-                  font=icon_font, fill=1)
 
-        # The status heading: centered on the full width, bold on vertical strokes only.
-        heading = Image.new("1", (WIDTH, HEIGHT))
-        text = str(status["state"])
-        ImageDraw.Draw(heading).text((int((WIDTH - font.getlength(text) - 1) // 2), 0), text, font=font, fill=1)
-        vertical = ImageChops.logical_and(heading, ImageChops.logical_or(ImageChops.offset(heading, 0, 1),
-                                                                         ImageChops.offset(heading, 0, -1)))
-        image = ImageChops.logical_or(image, ImageChops.logical_or(heading, ImageChops.offset(vertical, 1, 0)))
+        # Bottom row: first item anchored left, second centered, third anchored right.
+        y = 3 * LINE_HEIGHT
+        left, center, right = status_footer(status)
+        draw.text((0, y), left, font=font, fill=1)
+        draw.text((int((WIDTH - font.getlength(center)) // 2), y), center, font=font, fill=1)
+        draw.text((int(WIDTH - font.getlength(right)), y), right, font=font, fill=1)
+
+        icon_file, glyph = pick_icon(status)
+        size = ICON_SIZE
+        while True:  # the largest font size whose glyph ink fits the icon box
+            icon_font = ImageFont.truetype(str(icon_file), size)
+            ink_left, ink_top, ink_right, ink_bottom = icon_font.getbbox(glyph)
+            if size <= 1 or max(ink_right - ink_left, ink_bottom - ink_top) <= ICON_SIZE:
+                break
+            size -= 1
+        draw.text((ICON_X + (ICON_SIZE - ink_left - ink_right) // 2, ICON_Y + (ICON_SIZE - ink_top - ink_bottom) // 2),
+                  glyph, font=icon_font, fill=1)  # centered on the ink, not the advance box
+
+        # The status heading: upper case, centered between the left edge and the icon.
+        text = str(status["state"]).upper()
+        draw.text((int((ICON_X - font.getlength(text)) // 2), 0), text, font=font, fill=1)
         self.device.display(image)
 
     def clear(self) -> None:

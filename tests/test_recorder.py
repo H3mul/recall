@@ -216,9 +216,12 @@ class DisplayTests(unittest.TestCase):
 
     def test_footer_and_icon(self) -> None:
         from recall import display
-        self.assertEqual(display.status_footer(dict(free_bytes=123_400_000_000)), "free 123G")
+        self.assertEqual(display.status_footer(dict(state="waiting", free_bytes=123_400_000_000)),
+                         ("hd 123G", "0.0MB/s", "io 0%"))
+        self.assertEqual(display.status_footer(dict(state="recording", free_bytes=5_000_000_000, write_bps=1_000_000)),
+                         ("hd 5G", "1.0MB/s", "io --"))
         full = dict(state="recording", free_bytes=5_000_000_000, write_bps=2_600_000, io_stall_pct=3.4)
-        self.assertEqual(display.status_footer(full), "free 5G 2.6MB/s io3%")
+        self.assertEqual(display.status_footer(full), ("hd 5G", "2.6MB/s", "io 3%"))
         self.assertIs(display.pick_icon(dict(state="waiting")), display.HOURGLASS)
         self.assertIs(display.pick_icon(full), display.RECORD_DOT)
         self.assertIs(display.pick_icon({**full, "behind": 1}), display.SNAIL)
