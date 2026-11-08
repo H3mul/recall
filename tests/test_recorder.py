@@ -201,23 +201,31 @@ if __name__ == "__main__":
 
 
 class DisplayTests(unittest.TestCase):
-    def test_lines_fit_the_panel_and_frame_is_full_screen(self) -> None:
+    def test_status_lines(self) -> None:
         from recall import display
         rec = dict(state="recording", session_s=3725, free_bytes=123_400_000_000, channels=18, rate=48000,
                    remaining_s=18_000)
-        text = display.lines(rec)
-        self.assertEqual(text, ["recording 18ch 48k", "rec 01:02:05", "free 123.4 GB", "left 5h00m"])
-        self.assertTrue(all(len(t) <= 21 for t in text))
-        self.assertEqual(len(display.frame(text)), 512)
-        waiting = display.lines(dict(state="waiting", session_s=0, free_bytes=5_000_000_000))
+        self.assertEqual(display.status_lines(rec),
+                         ["recording 18ch 48k", "rec 01:02:05", "free 123.4 GB", "left 5h00m"])
+        waiting = display.status_lines(dict(state="waiting", session_s=0, free_bytes=5_000_000_000))
         self.assertEqual(waiting[3], "left --")
 
-    def test_missing_device_is_logged_not_raised(self) -> None:
+    def test_missing_panel_is_logged_not_raised_and_retried_once_a_minute(self) -> None:
         from recall import display
-        d = display.Display(dev="/nonexistent/i2c")
-        with self.assertLogs("recall", "ERROR"):
-            d.show(dict(state="waiting", session_s=0, free_bytes=1))
+
+        def absent() -> Any:
+            raise OSError("no panel")
+
+        now = [0.0]
+        screen = display.Display(connect=absent, clock=lambda: now[0])
+        status = dict(state="waiting", session_s=0, free_bytes=1)
+        with self.assertLogs("recall", "ERROR") as logged:
+            screen.show(status)
+            screen.show(status)  # inside the retry window: no second attempt
+            now[0] = 61.0
+            screen.show(status)
+        self.assertEqual(len(logged.records), 2)
 
     def test_clear_without_a_panel_is_a_noop(self) -> None:
         from recall import display
-        display.Display(dev="/nonexistent/i2c").clear()
+        display.Display().clear()

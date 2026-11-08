@@ -9,7 +9,9 @@ description = "Record all: supervised multitrack capture with arecord"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+  "luma.oled>=3.12"
+]
 
 [project.scripts]
 recall = "recall.cli:main"
@@ -20,3 +22,6 @@ python_version = "3.11"
 
 [tool.setuptools.package-dir]
 "" = "src"
+
+[tool.setuptools.package-data]
+recall = ["fonts/*"]
